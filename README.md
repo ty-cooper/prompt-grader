@@ -9,11 +9,14 @@ This will also require the ability to select the engine per added LLM. (GPT-3.5,
 
 I want the ability to pass in arbitrary tests. These will be ran against the provided prompts and then used to calculate the percent accuracy.
 
-An automatic report will then be generated from the test results and the provided prompts/engines/LLM's used. Similar to nmap html output.
+### Rules:
 
--t --tests : Specify the tests location ... figure out what format will be needed
--l --llms : Specify which llms will be used in this run (-l gpt4, claude)
--p --prompt : Specify the prompt that will be used to run the test
--f --prompt-file : Read the prompt from a specified txt file instead of stdin
--o --output : Specify the output location for the generated result. Provide a name for the file (-o Result)
--n --no-output : Turn off report generation. This will only output to stdout
+Arbitary tests need to follow a standard. They require you to return true or false for each test case
+
+OPTIONS:
+
+Data set - iterates through a file you provide, A + B = C and then checks if C === C (T/F)
+OR
+Tests - Checks expected output from prompts and again returns (T/F)
+
+OR both..

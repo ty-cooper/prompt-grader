@@ -1,9 +1,9 @@
 package main
 
 import (
-	"./cmd"
+	"score/cmd"
 )
 
 func main() {
-	cmd.Execute()	
+	cmd.Execute()
 }
