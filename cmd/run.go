@@ -3,18 +3,15 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
-	openai "github.com/sashabaranov/go-openai"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-
-	"github.com/3JoB/anthropic-sdk-go/v2"
 )
 
 func init() {
 	scoreCmd.AddCommand(runCmd)
 
+	runCmd.Flags().StringVarP(&dataFile, "dataFile", "d", "", "directory location for csv data set.")
 	runCmd.Flags().BoolP("listLlms", "L", false, "show available LLMs for use.")
 	runCmd.Flags().BoolP("listTestOptions", "T", false, "show compatible test frameworks.")
 	runCmd.Flags().StringSliceP("llms", "l", llms, "llms to use (ensure the relevant API keys are set).")
@@ -23,6 +20,7 @@ func init() {
 	runCmd.Flags().StringVarP(&promptFile, "promptFile", "f", "", "directory location of a txt file with a prompt.")
 	runCmd.Flags().StringVarP(&tests, "tests", "t", "", "directory location of a test file.")
 
+	viper.BindPFlag("dataFile", runCmd.Flags().Lookup("dataFile"))
 	viper.BindPFlag("listTestOptions", runCmd.Flags().Lookup("listTestOptions"))
 	viper.BindPFlag("listLlms", runCmd.Flags().Lookup("listLlms"))
 	viper.BindPFlag("llms", runCmd.Flags().Lookup("llms"))
@@ -32,6 +30,7 @@ func init() {
 }
 
 var (
+	dataFile   string
 	llms       []string
 	outputFile string
 	prompt     string
@@ -65,58 +64,19 @@ func onRun(cmd *cobra.Command, args []string) {
 		os.Exit(0)
 	}
 
-	// Check config file for available LLMs
+	// check config file for available LLMs
 	if viper.GetBool("listLlms") {
-		llms := GetLLMs()
+		availableLlms := GetLLMs()
 		fmt.Println("\nAvailable LLMs loaded into config: \n")
-		for _, llm := range llms {
+		for _, llm := range availableLlms {
 			fmt.Println(llm)
 		}
 		os.Exit(0)
 	}
 
-	var prompt string
-	argPromptFile := viper.GetString("promptFile")
-	if prompt == "" && argPromptFile == "" {
-		cobra.CompError(UsageMsg)
-		os.Exit(1)
-	}
+	// load csv file if a data-set is provided and get llm responses
+	results, seconds := SubmitData()
 
-	if argPromptFile != "" {
-		dat, err := os.ReadFile(argPromptFile)
-		cobra.CheckErr(err)
-		prompt = string(dat)
-	} else {
-		prompt = viper.GetString("prompt")
-	}
-
-	// Check if llms passed contain OpenAI and Anthropic and initialize where needed
-	var openAiClient *openai.Client
-	var anthropicClient *anthropic.Client
-
-	llms := viper.GetStringSlice("llms")
-	if len(llms) == 0 {
-		cobra.CompError(UsageMsg)
-		os.Exit(1)
-	}
-
-	for _, llm := range llms {
-		llm = strings.TrimSpace(llm)
-
-		if llm[:3] == "gpt" {
-			openAiClient = InitOpenAi()
-		} else if llm[:6] == "claude" {
-			anthropicClient = InitAnthropic()
-		}
-	}
-
-	if openAiClient != nil {
-		response := GetGPTResponse(openAiClient, prompt, "gpt-4")
-		fmt.Println(response)
-	}
-
-	if anthropicClient != nil {
-		responseAnthropic := GetClaudeResponse(anthropicClient, prompt)
-		fmt.Println(responseAnthropic)
-	}
+	// visualize the results and output to HTML file
+	LoadResults(results, seconds)
 }

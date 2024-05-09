@@ -15,6 +15,7 @@ require (
 	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/cornelk/hashmap v1.0.8 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
+	github.com/go-echarts/go-echarts/v2 v2.3.3 // indirect
 	github.com/goccy/go-reflect v1.2.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
