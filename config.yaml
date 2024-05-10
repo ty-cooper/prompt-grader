@@ -11,4 +11,4 @@ supportedLLMs:
   - 'claude-3-haiku-20240307'
 supportedTestFrameworks:
   - 'None yet'
-outputFile: $HOME/.score/reports
+outputFile: '$HOME/.score/reports/output.html'

@@ -11,6 +11,7 @@ import (
 func init() {
 	scoreCmd.AddCommand(runCmd)
 
+	runCmd.Flags().BoolP("concurrent", "C", false, "Run tests concurrently. (WARNING: may trigger rate limits quicker)")
 	runCmd.Flags().StringVarP(&dataFile, "dataFile", "d", "", "directory location for csv data set.")
 	runCmd.Flags().BoolP("listLlms", "L", false, "show available LLMs for use.")
 	runCmd.Flags().BoolP("listTestOptions", "T", false, "show compatible test frameworks.")
@@ -20,6 +21,7 @@ func init() {
 	runCmd.Flags().StringVarP(&promptFile, "promptFile", "f", "", "directory location of a txt file with a prompt.")
 	runCmd.Flags().StringVarP(&tests, "tests", "t", "", "directory location of a test file.")
 
+	viper.BindPFlag("concurrent", runCmd.Flags().Lookup("concurrent"))
 	viper.BindPFlag("dataFile", runCmd.Flags().Lookup("dataFile"))
 	viper.BindPFlag("listTestOptions", runCmd.Flags().Lookup("listTestOptions"))
 	viper.BindPFlag("listLlms", runCmd.Flags().Lookup("listLlms"))
@@ -72,6 +74,15 @@ func onRun(cmd *cobra.Command, args []string) {
 			fmt.Println(llm)
 		}
 		os.Exit(0)
+	}
+
+	if viper.GetBool("concurrent") {
+		// load csv file if a data-set is provided and get llm responses
+		results, seconds := SubmitDataAsync(10)
+
+		// visualize the results and output to HTML file
+		LoadResults(results, seconds)
+		return
 	}
 
 	// load csv file if a data-set is provided and get llm responses
