@@ -14,6 +14,7 @@ require (
 	github.com/3JoB/unsafeConvert v1.6.0 // indirect
 	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/cornelk/hashmap v1.0.8 // indirect
+	github.com/cpuguy83/go-md2man/v2 v2.0.3 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-echarts/go-echarts/v2 v2.3.3 // indirect
 	github.com/goccy/go-reflect v1.2.0 // indirect
@@ -26,6 +27,7 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/sashabaranov/go-openai v1.23.1 // indirect

@@ -24,6 +24,12 @@ func onRootRun(cmd *cobra.Command, args []string) {
 }
 
 func Execute() error {
+	// TODO: delete this
+	// err := doc.GenMarkdownTree(scoreCmd, "./docs")
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
 	return scoreCmd.Execute()
 }
 
