@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"time"
@@ -12,9 +11,8 @@ import (
 	"github.com/3JoB/anthropic-sdk-go/v2"
 	"github.com/3JoB/anthropic-sdk-go/v2/data"
 	"github.com/3JoB/anthropic-sdk-go/v2/resp"
-	"github.com/go-echarts/go-echarts/v2/charts"
-	"github.com/go-echarts/go-echarts/v2/opts"
 	"github.com/sashabaranov/go-openai"
+	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -57,6 +55,20 @@ type FinalResult struct {
 	results                   []*Result
 }
 
+func (fr FinalResult) String() string {
+	return fmt.Sprintf("Results achieved in %v\n\nThere were a total of %d tests ran.\n\tPassed: %d\n\tFailed: %d\n\tInconclusive: "+
+		"%d\n\nScore: %.2f%%\nScore excluding inconclusive tests: %.2f%%\n",
+		fr.seconds, fr.total, fr.passed, fr.failed, fr.inconclusive, fr.percentage, fr.percentageNoInconclusives)
+}
+
+type RateLimitError struct {
+	retryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("rate limit hit, retry after %s", e.retryAfter)
+}
+
 const UsageMsg = "Usage: score run [-p, --prompt] <prompt> [-l, --llms] <llms> || score run [-f, --prompt-file] <prompt.txt> [-l, --llms] <llms>\n"
 
 func initOpenAi(llm string) *OpenAi {
@@ -92,7 +104,7 @@ func initAnthropic(llm string) *Anthropic {
 	return &anthropicObj
 }
 
-func GetGPTResponse(c *openai.Client, prompt, model string) string {
+func GetGPTResponse(c *openai.Client, prompt, model string) (string, error) {
 	resp, err := c.CreateChatCompletion(
 		context.Background(),
 		openai.ChatCompletionRequest{
@@ -106,11 +118,18 @@ func GetGPTResponse(c *openai.Client, prompt, model string) string {
 		},
 	)
 
-	cobra.CheckErr(err)
-	return resp.Choices[0].Message.Content
+	if err != nil {
+		if strings.Contains(err.Error(), "Rate limit reached") {
+			retryAfter := ParseRateLimitError(err.Error())
+			return "", &RateLimitError{retryAfter}
+		}
+		return "", err
+	}
+
+	return resp.Choices[0].Message.Content, nil
 }
 
-func GetClaudeResponse(c *anthropic.Client, prompt, model string) string {
+func GetClaudeResponse(c *anthropic.Client, prompt, model string) (string, error) {
 	d, err := c.Send(&anthropic.Sender{
 		Message: data.MessageModule{
 			Human: prompt,
@@ -118,8 +137,14 @@ func GetClaudeResponse(c *anthropic.Client, prompt, model string) string {
 		Sender: &resp.Sender{MaxToken: 1200},
 	})
 
-	cobra.CheckErr(err)
-	return d.Response.Completion[1:]
+	if err != nil {
+		if strings.Contains(err.Error(), "rate limit") {
+			return "", &RateLimitError{}
+		}
+		return "", err
+	}
+
+	return d.Response.Completion[1:], nil
 }
 
 func GetLLMs() []string {
@@ -192,7 +217,7 @@ func InitLLMs() *LLMs {
 	return &llmsObj
 }
 
-func createResults(llmsObj *LLMs, e DataEntry, constructedPrompt string) []*Result {
+func createResults(llmsObj *LLMs, e DataEntry, constructedPrompt string, bar *progressbar.ProgressBar) []*Result {
 	var results []*Result
 
 	// add additional llm support here
@@ -202,7 +227,10 @@ func createResults(llmsObj *LLMs, e DataEntry, constructedPrompt string) []*Resu
 
 		res.llm = llmsObj.openAi.llm
 
-		response := GetGPTResponse(llmsObj.openAi.client, constructedPrompt, llmsObj.openAi.llm)
+		response, err := processWithRetries(func() (string, error) {
+			return GetGPTResponse(llmsObj.openAi.client, constructedPrompt, llmsObj.openAi.llm)
+		})
+		cobra.CheckErr(err)
 
 		if strings.ToLower(response) == "true" {
 			res.passed = true
@@ -213,6 +241,7 @@ func createResults(llmsObj *LLMs, e DataEntry, constructedPrompt string) []*Resu
 		}
 
 		results = append(results, &res)
+		bar.Add(1)
 	}
 
 	if llmsObj.anthropic != nil {
@@ -221,7 +250,11 @@ func createResults(llmsObj *LLMs, e DataEntry, constructedPrompt string) []*Resu
 
 		res.llm = llmsObj.anthropic.llm
 
-		response := GetClaudeResponse(llmsObj.anthropic.client, constructedPrompt, llmsObj.anthropic.llm)
+		response, err := processWithRetries(func() (string, error) {
+			return GetClaudeResponse(llmsObj.anthropic.client, constructedPrompt, llmsObj.anthropic.llm)
+		})
+		cobra.CheckErr(err)
+
 		if strings.ToLower(response) == "true" {
 			res.passed = true
 		} else if strings.ToLower(response) == "false" {
@@ -231,9 +264,33 @@ func createResults(llmsObj *LLMs, e DataEntry, constructedPrompt string) []*Resu
 		}
 
 		results = append(results, &res)
+		bar.Add(1)
 	}
 
 	return results
+}
+
+func ParseRateLimitError(message string) time.Duration {
+	// hard-coded for now
+	return 5 * time.Second
+}
+
+func processWithRetries(request func() (string, error)) (string, error) {
+	for {
+		response, err := request()
+		if err != nil {
+			if rateLimitError, ok := err.(*RateLimitError); ok {
+				if viper.GetBool("verbose") {
+					fmt.Printf("\nRate limit hit... trying again in %s", rateLimitError.retryAfter)
+				}
+				time.Sleep(rateLimitError.retryAfter)
+				continue
+			} else {
+				return "", err
+			}
+		}
+		return response, nil
+	}
 }
 
 func SubmitData() ([]*Result, time.Duration) {
@@ -251,16 +308,12 @@ func SubmitData() ([]*Result, time.Duration) {
 	cobra.CheckErr(err)
 	defer f.Close()
 
-	r := csv.NewReader(f)
+	r, err := csv.NewReader(f).ReadAll()
+	cobra.CheckErr(err)
+	bar := progressbar.Default(int64(len(r))-1, "running tests")
 
-	for {
+	for _, record := range r {
 		var e DataEntry
-
-		record, err := r.Read()
-		if err == io.EOF {
-			break
-		}
-		cobra.CheckErr(err)
 
 		if record[0] == "passed" {
 			continue
@@ -272,7 +325,7 @@ func SubmitData() ([]*Result, time.Duration) {
 
 		constructedPrompt := createPrompt(e.diffDelta)
 
-		rowResults := createResults(llmsObj, e, constructedPrompt)
+		rowResults := createResults(llmsObj, e, constructedPrompt, bar)
 
 		results = append(results, rowResults...)
 	}
@@ -281,7 +334,6 @@ func SubmitData() ([]*Result, time.Duration) {
 	return results, seconds
 }
 
-// TODO: call the visualization function this will need to loop through each result and work on outputting to an HTML file
 func LoadResults(results []*Result, seconds time.Duration) {
 	var finalResult FinalResult
 	total := len(results)
@@ -289,7 +341,10 @@ func LoadResults(results []*Result, seconds time.Duration) {
 
 	for k, v := range results {
 		if v.response == "" {
-			fmt.Println(k, v.data.passed, v) // TODO: remove line
+			if viper.GetBool("verbose") {
+				fmt.Println(k, v.data.passed, v)
+			}
+
 			if v.passed == v.data.passed {
 				passed++
 			} else {
@@ -300,16 +355,12 @@ func LoadResults(results []*Result, seconds time.Duration) {
 		}
 	}
 
-	fmt.Println() // TODO: remove line
+	if viper.GetBool("verbose") {
+		fmt.Println()
+	}
 
 	percentage := Round((float64(passed)/float64(total))*100, 0.05)
 	percentageNoInconclusives := Round((float64(passed)/float64(total-inconclusive))*100, 0.05)
-
-	finalResultFmt := fmt.Sprintf("Results achieved in %v\n\nThere were a total of %d tests ran.\n\tPassed: %d\n\tFailed: %d\n\tInconclusive: "+
-		"%d\n\nScore: %.2f%%\nScore excluding inconclusive tests: %.2f%%\n",
-		seconds, total, passed, failed, inconclusive, percentage, percentageNoInconclusives)
-
-	fmt.Println(finalResultFmt) // TODO: turn this into a method on the object? just have it output this formatted string when you call the obj
 
 	finalResult.failed = failed
 	finalResult.total = total
@@ -320,58 +371,9 @@ func LoadResults(results []*Result, seconds time.Duration) {
 	finalResult.seconds = seconds
 	finalResult.results = results
 
-	// TODO: check if no output flag is set and return early if so
-	generateBarChart(&finalResult)
-}
+	fmt.Println(finalResult)
 
-func generateBarItems(results []*Result, llm string) (int, int, int) {
-	passed, failed, inconclusive := 0, 0, 0
-
-	for _, res := range results {
-		if res.llm == llm {
-			if res.response == "" {
-				if res.passed == res.data.passed {
-					passed++
-				} else {
-					failed++
-				}
-			} else {
-				inconclusive++
-			}
-		}
+	if !viper.GetBool("noOutput") {
+		GenerateBarChart(&finalResult)
 	}
-
-	return passed, failed, inconclusive
-}
-
-func generateBarChart(finalResult *FinalResult) {
-	bar := charts.NewBar()
-
-	bar.SetGlobalOptions(charts.WithTitleOpts(opts.Title{
-		Title: "LLM Prompt Scoring",
-		Subtitle: fmt.Sprintf("Score: %.2f%%, Score excluding inconclusive: %.2f%%, Time: %vs",
-			finalResult.percentage, finalResult.percentageNoInconclusives, finalResult.seconds.Seconds()),
-	}))
-
-	llmModels := []string{"gpt-4", "claude-3-opus-20240229"} // TODO: make this dynamic
-	passedItems := make([]opts.BarData, 0)
-	failedItems := make([]opts.BarData, 0)
-	inconclusiveItems := make([]opts.BarData, 0)
-
-	for _, llm := range llmModels {
-		passed, failed, inconclusive := generateBarItems(finalResult.results, llm)
-		passedItems = append(passedItems, opts.BarData{Value: passed})
-		failedItems = append(failedItems, opts.BarData{Value: failed})
-		inconclusiveItems = append(inconclusiveItems, opts.BarData{Value: inconclusive})
-	}
-
-	bar.SetXAxis(llmModels).
-		AddSeries("Passed", passedItems).
-		AddSeries("Failed", failedItems).
-		AddSeries("Inconclusive", inconclusiveItems)
-
-	outputFile := viper.GetString("outputFile")
-
-	f, _ := os.Create(outputFile)
-	bar.Render(f)
 }
