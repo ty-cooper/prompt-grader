@@ -48,10 +48,10 @@ func processJob(job Job) (*GlobalResult, error) {
 	var res GlobalResult
 
 	switch v := job.dataEntry.(type) {
-	case *DataEntry:
+	case DataEntry:
 		res = &Result{}
 		res.SetData(&v)
-	case *PseudoDataEntry:
+	case PseudoDataEntry:
 		res = &PseudoResult{}
 		res.SetData(&v)
 	default:

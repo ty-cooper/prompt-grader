@@ -14,20 +14,25 @@ func generateBarItems(results []GlobalResult, llm string) (int, int, int) {
 	passed, failed, inconclusive := 0, 0, 0
 
 	for _, v := range results {
-		if v.GetResponse() == "" {
-			switch d := v.GetData().(type) {
-			case *Result:
-				if v.GetPassed() == d.passed {
-					passed++
-				} else {
-					failed++
+		if v.GetLLM() == llm {
+
+			if v.GetResponse() == "" {
+				switch d := v.GetData().(type) {
+				case Result:
+					if v.GetPassed() == d.passed {
+						passed++
+					} else {
+						failed++
+					}
+				case PseudoResult:
+					if v.GetPassed() == d.passed {
+						passed++
+					} else {
+						failed++
+					}
 				}
-			case *PseudoResult:
-				if v.GetPassed() == d.passed {
-					passed++
-				} else {
-					failed++
-				}
+			} else {
+				inconclusive++
 			}
 		} else {
 			inconclusive++

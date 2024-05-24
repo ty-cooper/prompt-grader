@@ -266,10 +266,10 @@ func createResults(llmsObj *LLMs, e interface{}, constructedPrompt string, bar *
 	var res GlobalResult
 
 	switch v := e.(type) {
-	case *DataEntry:
+	case DataEntry:
 		res = &Result{}
 		res.SetData(&v)
-	case *PseudoDataEntry:
+	case PseudoDataEntry:
 		res = &PseudoResult{}
 		res.SetData(&v)
 	default:
@@ -393,7 +393,7 @@ func LoadResults(results []GlobalResult, seconds time.Duration) {
 	for k, v := range results {
 		if v.GetResponse() == "" {
 			switch d := v.GetData().(type) {
-			case *Result:
+			case *DataEntry:
 				if viper.GetBool("verbose") {
 					fmt.Println(k, d.passed, v)
 				}
@@ -403,7 +403,7 @@ func LoadResults(results []GlobalResult, seconds time.Duration) {
 				} else {
 					failed++
 				}
-			case *PseudoResult:
+			case *PseudoDataEntry:
 				if viper.GetBool("verbose") {
 					fmt.Println(k, d.passed, v)
 				}
