@@ -16,11 +16,11 @@ import (
 
 type Job struct {
 	llmsObj           *LLMs
-	dataEntry         DataEntry
+	dataEntry         interface{}
 	constructedPrompt string
 }
 
-func worker(jobs <-chan Job, results chan<- *Result, bar *progressbar.ProgressBar) {
+func worker(jobs <-chan Job, results chan<- *GlobalResult, bar *progressbar.ProgressBar) {
 	for job := range jobs {
 		for {
 			res, err := processJob(job)
@@ -44,44 +44,51 @@ func worker(jobs <-chan Job, results chan<- *Result, bar *progressbar.ProgressBa
 	}
 }
 
-func processJob(job Job) (*Result, error) {
+func processJob(job Job) (*GlobalResult, error) {
+	var res GlobalResult
+
+	switch v := job.dataEntry.(type) {
+	case *DataEntry:
+		res = &Result{}
+		res.SetData(&v)
+	case *PseudoDataEntry:
+		res = &PseudoResult{}
+		res.SetData(&v)
+	default:
+		return nil, fmt.Errorf("Invalid type passed to processJob()")
+	}
+
 	if job.llmsObj.openAi != nil {
-		var res Result
-		res.data = &job.dataEntry
-		res.llm = job.llmsObj.openAi.llm
+		res.SetLLM(job.llmsObj.openAi.llm)
 		response, err := GetGPTResponse(job.llmsObj.openAi.client, job.constructedPrompt, job.llmsObj.openAi.llm)
 		if err != nil {
 			return nil, err
 		}
 
 		if strings.ToLower(response) == "true" {
-			res.passed = true
+			res.SetPassed(true)
 		} else if strings.ToLower(response) == "false" {
-			res.passed = false
+			res.SetPassed(false)
 		} else {
-			res.response = response
+			res.SetResponse(response)
 		}
 
 		return &res, nil
 	}
 
 	if job.llmsObj.anthropic != nil {
-		var res Result
-		res.data = &job.dataEntry
-
-		res.llm = job.llmsObj.anthropic.llm
-
+		res.SetLLM(job.llmsObj.anthropic.llm)
 		response, err := GetClaudeResponse(job.llmsObj.anthropic.client, job.constructedPrompt, job.llmsObj.anthropic.llm)
 		if err != nil {
 			return nil, err
 		}
 
 		if strings.ToLower(response) == "true" {
-			res.passed = true
+			res.SetPassed(true)
 		} else if strings.ToLower(response) == "false" {
-			res.passed = false
+			res.SetPassed(false)
 		} else {
-			res.response = response
+			res.SetResponse(response)
 		}
 
 		return &res, nil
@@ -90,11 +97,11 @@ func processJob(job Job) (*Result, error) {
 	return nil, nil
 }
 
-func SubmitDataAsync(workerCount int) ([]*Result, time.Duration) {
+func SubmitDataAsync(workerCount int) ([]GlobalResult, time.Duration) {
 	start := time.Now()
 
 	llmsObj := InitLLMs()
-	var resultsList []*Result
+	var resultsList []GlobalResult
 
 	dataFile := viper.GetString("dataFile")
 	if dataFile == "" {
@@ -110,7 +117,7 @@ func SubmitDataAsync(workerCount int) ([]*Result, time.Duration) {
 
 	bar := progressbar.Default(int64(len(r))-1, "running tests")
 	jobs := make(chan Job, workerCount)
-	results := make(chan *Result)
+	results := make(chan *GlobalResult)
 	var wg sync.WaitGroup
 
 	for w := 0; w < workerCount; w++ {
@@ -140,7 +147,7 @@ func SubmitDataAsync(workerCount int) ([]*Result, time.Duration) {
 
 	go func() {
 		for res := range results {
-			resultsList = append(resultsList, res)
+			resultsList = append(resultsList, *res)
 		}
 	}()
 

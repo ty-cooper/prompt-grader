@@ -10,20 +10,27 @@ import (
 )
 
 // TODO: visualization is a WIP
-func generateBarItems(results []*Result, llm string) (int, int, int) {
+func generateBarItems(results []GlobalResult, llm string) (int, int, int) {
 	passed, failed, inconclusive := 0, 0, 0
 
-	for _, res := range results {
-		if res.llm == llm {
-			if res.response == "" {
-				if res.passed == res.data.passed {
+	for _, v := range results {
+		if v.GetResponse() == "" {
+			switch d := v.GetData().(type) {
+			case *Result:
+				if v.GetPassed() == d.passed {
 					passed++
 				} else {
 					failed++
 				}
-			} else {
-				inconclusive++
+			case *PseudoResult:
+				if v.GetPassed() == d.passed {
+					passed++
+				} else {
+					failed++
+				}
 			}
+		} else {
+			inconclusive++
 		}
 	}
 

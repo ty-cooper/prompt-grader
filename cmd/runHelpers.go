@@ -52,7 +52,50 @@ type FinalResult struct {
 	inconclusive              int
 	percentage                float64
 	percentageNoInconclusives float64
-	results                   []*Result
+	results                   []GlobalResult
+}
+
+type GlobalResult interface {
+	GetData() interface{}
+	SetData(data interface{})
+	GetPassed() bool
+	SetPassed(passed bool)
+	GetResponse() string
+	SetResponse(response string)
+	GetLLM() string
+	SetLLM(llm string)
+}
+
+func (r *Result) GetData() interface{} {
+	return r.data
+}
+
+func (r *Result) SetData(data interface{}) {
+	r.data = data.(*DataEntry)
+}
+
+func (r *Result) GetPassed() bool {
+	return r.passed
+}
+
+func (r *Result) SetPassed(passed bool) {
+	r.passed = passed
+}
+
+func (r *Result) GetResponse() string {
+	return r.response
+}
+
+func (r *Result) SetResponse(response string) {
+	r.response = response
+}
+
+func (r *Result) GetLLM() string {
+	return r.llm
+}
+
+func (r *Result) SetLLM(llm string) {
+	r.llm = llm
 }
 
 func (fr FinalResult) String() string {
@@ -217,15 +260,24 @@ func InitLLMs() *LLMs {
 	return &llmsObj
 }
 
-func createResults(llmsObj *LLMs, e DataEntry, constructedPrompt string, bar *progressbar.ProgressBar) []*Result {
-	var results []*Result
-
+func createResults(llmsObj *LLMs, e interface{}, constructedPrompt string, bar *progressbar.ProgressBar) []GlobalResult {
 	// add additional llm support here
-	if llmsObj.openAi != nil {
-		var res Result
-		res.data = &e
+	var results []GlobalResult
+	var res GlobalResult
 
-		res.llm = llmsObj.openAi.llm
+	switch v := e.(type) {
+	case *DataEntry:
+		res = &Result{}
+		res.SetData(&v)
+	case *PseudoDataEntry:
+		res = &PseudoResult{}
+		res.SetData(&v)
+	default:
+		return nil
+	}
+
+	if llmsObj.openAi != nil {
+		res.SetLLM(llmsObj.openAi.llm)
 
 		response, err := processWithRetries(func() (string, error) {
 			return GetGPTResponse(llmsObj.openAi.client, constructedPrompt, llmsObj.openAi.llm)
@@ -233,22 +285,19 @@ func createResults(llmsObj *LLMs, e DataEntry, constructedPrompt string, bar *pr
 		cobra.CheckErr(err)
 
 		if strings.ToLower(response) == "true" {
-			res.passed = true
+			res.SetPassed(true)
 		} else if strings.ToLower(response) == "false" {
-			res.passed = false
+			res.SetPassed(false)
 		} else {
-			res.response = response
+			res.SetResponse(response)
 		}
 
-		results = append(results, &res)
+		results = append(results, res)
 		bar.Add(1)
 	}
 
 	if llmsObj.anthropic != nil {
-		var res Result
-		res.data = &e
-
-		res.llm = llmsObj.anthropic.llm
+		res.SetLLM(llmsObj.anthropic.llm)
 
 		response, err := processWithRetries(func() (string, error) {
 			return GetClaudeResponse(llmsObj.anthropic.client, constructedPrompt, llmsObj.anthropic.llm)
@@ -256,14 +305,14 @@ func createResults(llmsObj *LLMs, e DataEntry, constructedPrompt string, bar *pr
 		cobra.CheckErr(err)
 
 		if strings.ToLower(response) == "true" {
-			res.passed = true
+			res.SetPassed(true)
 		} else if strings.ToLower(response) == "false" {
-			res.passed = false
+			res.SetPassed(false)
 		} else {
-			res.response = response
+			res.SetResponse(response)
 		}
 
-		results = append(results, &res)
+		results = append(results, res)
 		bar.Add(1)
 	}
 
@@ -293,11 +342,11 @@ func processWithRetries(request func() (string, error)) (string, error) {
 	}
 }
 
-func SubmitData() ([]*Result, time.Duration) {
+func SubmitData() ([]GlobalResult, time.Duration) {
 	start := time.Now()
 
 	llmsObj := InitLLMs()
-	var results []*Result
+	var results []GlobalResult
 
 	dataFile := viper.GetString("dataFile")
 	if dataFile == "" {
@@ -325,30 +374,45 @@ func SubmitData() ([]*Result, time.Duration) {
 
 		constructedPrompt := createPrompt(e.diffDelta)
 
-		rowResults := createResults(llmsObj, e, constructedPrompt, bar)
-
-		results = append(results, rowResults...)
+		if rowResults := createResults(llmsObj, e, constructedPrompt, bar); rowResults == nil {
+			cobra.CompError("Invalid type passed to createResults().\n")
+		} else {
+			results = append(results, rowResults...)
+		}
 	}
 
 	seconds := time.Since(start)
 	return results, seconds
 }
 
-func LoadResults(results []*Result, seconds time.Duration) {
+func LoadResults(results []GlobalResult, seconds time.Duration) {
 	var finalResult FinalResult
 	total := len(results)
 	var passed, failed, inconclusive int = 0, 0, 0
 
 	for k, v := range results {
-		if v.response == "" {
-			if viper.GetBool("verbose") {
-				fmt.Println(k, v.data.passed, v)
-			}
+		if v.GetResponse() == "" {
+			switch d := v.GetData().(type) {
+			case *Result:
+				if viper.GetBool("verbose") {
+					fmt.Println(k, d.passed, v)
+				}
 
-			if v.passed == v.data.passed {
-				passed++
-			} else {
-				failed++
+				if v.GetPassed() == d.passed {
+					passed++
+				} else {
+					failed++
+				}
+			case *PseudoResult:
+				if viper.GetBool("verbose") {
+					fmt.Println(k, d.passed, v)
+				}
+
+				if v.GetPassed() == d.passed {
+					passed++
+				} else {
+					failed++
+				}
 			}
 		} else {
 			inconclusive++
