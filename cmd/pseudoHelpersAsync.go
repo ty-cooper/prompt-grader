@@ -48,19 +48,18 @@ func SubmitPseudoDataAsync(workerCount int) ([]GlobalResult, time.Duration) {
 		for _, record := range r {
 			var e PseudoDataEntry
 
-			if record[0] == "Lesson" {
+			if record[0] == strings.ToLower("lesson") {
 				continue
 			}
 
-			e.passed = strings.ToLower(record[4]) == "true"
+			e.passed = strings.ToLower(record[3]) == "true"
 			e.lesson = strings.ToLower(record[0])
 			e.external = record[1]
 			e.patch = record[2]
-			e.pseudoPatch = record[3]
-			e.reason = record[5]
-			e.vuln = record[6]
+			e.reason = record[4]
+			e.vuln = record[5]
 
-			prompt := fmt.Sprintf("Expected solution: %s\nPseudocode solution: %s\nvulnerability being tested: %s", e.patch, e.pseudoPatch, e.passed)
+			prompt := fmt.Sprintf("Vulnerable code: %s\nPatched Code: %s\nRequirements for passed test: %s", e.external, e.patch, e.vuln)
 
 			constructedPrompt := createPrompt(prompt)
 

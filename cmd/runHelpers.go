@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	. "github.com/theplant/htmlgo"
 )
 
 type OpenAi struct {
@@ -439,5 +442,166 @@ func LoadResults(results []GlobalResult, seconds time.Duration) {
 
 	if !viper.GetBool("noOutput") {
 		GenerateBarChart(&finalResult)
+		GenerateHTML(&finalResult)
 	}
+}
+
+func GenerateHTML(f *FinalResult) {
+	outputFilePath := os.ExpandEnv(viper.GetString("outputFile"))
+
+	now := time.Now()
+	timeSuffix := now.Format("01-02-2006_150405")
+
+	ext := filepath.Ext(outputFilePath)
+	base := outputFilePath[:len(outputFilePath)-len(ext)]
+	outputFilePath = fmt.Sprintf("%s-%s%s", base, timeSuffix, ext)
+
+	outputDir := filepath.Dir(outputFilePath)
+	err := os.MkdirAll(outputDir, os.ModePerm)
+	cobra.CheckErr(err)
+
+	outputFile, err := os.Create(outputFilePath)
+	cobra.CheckErr(err)
+	defer outputFile.Close()
+
+	styles := `
+		body {
+			font-family: Arial, sans-serif;
+			margin: 20px;
+		}
+
+		.content {
+			padding: 0 18px;
+			display: none;
+			overflow: hidden;
+			background-color: #f1f1f1;
+		}
+
+		.active, .collapsible:hover {
+			background-color: #ccc;
+		}
+		  
+		.collapsible {
+			background-color: #eee;
+			color: #444;
+			cursor: pointer;
+			padding: 18px;
+			width: 100%;
+			border: none;
+			text-align: left;
+			outline: none;
+			font-size: 15px;
+			margin: 1em 0 0 0;
+		}
+	`
+
+	script := `
+		var coll = document.getElementsByClassName("collapsible");
+		var i;
+
+		for (i = 0; i < coll.length; i++) {
+		coll[i].addEventListener("click", function() {
+			this.classList.toggle("active");
+			var content = this.nextElementSibling;
+			if (content.style.display === "block") {
+			content.style.display = "none";
+			} else {
+			content.style.display = "block";
+			}
+		});
+		}
+	`
+
+	detailsDiv := Div(H2("Failed Test Details"))
+
+	for _, result := range f.results {
+		switch data := result.GetData().(type) {
+		case *DataEntry:
+			if result.GetPassed() == data.passed {
+				continue
+			}
+
+			resultParagraph := P(
+				Textf("User-Passed: %t", data.passed),
+				Br(),
+				Textf("Passed: %t", result.GetPassed()),
+				Br(),
+				Textf("Diff Delta: %s", data.diffDelta),
+				Br(),
+				Textf("LLM: %s", result.GetLLM()),
+				Br(),
+			)
+			detailsDiv.AppendChildren(resultParagraph)
+		case *PseudoDataEntry:
+			if result.GetPassed() == data.passed {
+				continue
+			}
+
+			resultParagraph := P(
+				Textf("LLM: %s said %t", result.GetLLM(), result.GetPassed()),
+				Br(),
+				Textf("Expected Result: %t", data.passed),
+				Br(),
+				Iff(len(data.reason) > 0, func() HTMLComponent {
+					return Textf("Reason: %s", data.reason)
+				}),
+				Iff(len(result.GetResponse()) > 0, func() HTMLComponent {
+					return Textf("LLM Reason: %s", result.GetResponse())
+				}),
+			)
+
+			dataDiv := Div(
+				Button("External File").Type("button").Class("collapsible"),
+				Div(
+					Pre(data.external),
+				).Class("content"),
+				Button("Patch File").Type("button").Class("collapsible"),
+				Div(
+					Pre(data.patch),
+				).Class("content"),
+				Hr(),
+			)
+
+			detailsDiv.AppendChildren(resultParagraph)
+			detailsDiv.AppendChildren(dataDiv)
+		}
+	}
+
+	comp := HTML(
+		Head(
+			Meta().Charset("utf8"),
+			Title("Score report"),
+			Style(styles),
+		),
+		Body(
+			H2("Overview"),
+			P(
+				Textf("%v", time.Now().Format("01-02-2006, 15:04:05")),
+			),
+			P(
+				Textf("%d tests ran in %v\n", f.total, f.seconds),
+			),
+			P(
+				Textf("Passed: %d", f.passed),
+				Br(),
+				Textf("Failed: %d", f.failed),
+				Br(),
+				Textf("Total: %d", f.total),
+				Br(),
+				Textf("Inconclusive: %d", f.inconclusive),
+			),
+			P(
+				Textf("Score: %.2f%%", f.percentage),
+				Br(),
+				Textf("Score excluding inconclusives: %.2f%%", f.percentageNoInconclusives),
+				Br(),
+			),
+
+			detailsDiv,
+		),
+		Script(script),
+	)
+
+	Fprint(outputFile, comp, context.TODO())
+	fmt.Println("File written to:", outputFilePath)
 }

@@ -1,6 +1,7 @@
 supportedLLMs:
   - 'gpt-3.5-turbo'
   - 'gpt-4'
+  - 'gpt-4o'
   - 'gpt-4-turbo'
   - 'claude-instant-1'
   - 'claude-2'
